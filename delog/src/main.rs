@@ -4,6 +4,11 @@ use std::sync::mpsc::{channel, Receiver};
 use std::thread;
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
+use sysinfo::System;
+
+use crate::children::get_child_pids;
+
+mod children;
 
 fn execute_subcommand(command: &str, args: &[&str]) -> (Receiver<String>, Pid) {
     let (sender, receiver) = channel();
@@ -28,7 +33,7 @@ fn execute_subcommand(command: &str, args: &[&str]) -> (Receiver<String>, Pid) {
     (receiver, pid)
 }
 
-fn monitor_logs(receiver: Receiver<String>, keywords: &[&str], pid: Pid) {
+fn monitor_logs(system: &System, receiver: Receiver<String>, keywords: &[&str], pid: Pid) {
     for line in receiver {
         let mut keyword_found = false;
         for &keyword in keywords {
@@ -39,16 +44,22 @@ fn monitor_logs(receiver: Receiver<String>, keywords: &[&str], pid: Pid) {
         }
         if keyword_found {
             println!("Breakpoint: {}", line);
-            pause_process(pid);
+            pause_process(system, pid);
         }
         println!("{}", line);
     }
 }
 
-fn pause_process(pid: Pid) {
+fn pause_process(system: &System, pid: Pid) {
     println!("Process paused. Press 'c' to continue...");
     // Send SIGSTOP to pause the process
     kill(pid, Signal::SIGSTOP).expect("Failed to pause process");
+
+    // Pause forked child processes
+    let child_pids = get_child_pids(system, pid);
+    for child_pid in &child_pids {
+        kill(*child_pid, Signal::SIGSTOP).expect("Failed to pause child process");
+    }
 
     let mut input = String::new();
     loop {
@@ -57,6 +68,9 @@ fn pause_process(pid: Pid) {
         if input.trim() == "c" {
             // Send SIGCONT to resume the process
             kill(pid, Signal::SIGCONT).expect("Failed to resume process");
+            for child_pid in &child_pids {
+                kill(*child_pid, Signal::SIGCONT).expect("Failed to resume child process");
+            }
             break;
         }
         println!("Invalid input. Press 'c' to continue...");
@@ -75,6 +89,6 @@ fn main() {
     let keywords = ["BREAKPOINT", "BREAK"];
 
     let (receiver, pid) = execute_subcommand(command, &command_args);
-
-    monitor_logs(receiver, &keywords, pid);
+    let system = System::new_all();
+    monitor_logs(&system, receiver, &keywords, pid);
 }
