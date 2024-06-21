@@ -4,7 +4,7 @@ main:
 build:
 	cargo build --release
 
-install:
+install: 
 	cargo install --path delog
 
 test-command:
