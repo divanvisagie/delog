@@ -69,5 +69,4 @@ fn main() {
     let receiver = execute_subcommand(command, &command_args);
 
     monitor_logs(receiver, &keywords);
-    println!("Hello, world!");
 }
