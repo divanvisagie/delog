@@ -1,0 +1,3 @@
+[workspace]
+members = ["delog", "log_simulator"]
+resolver = "2"
