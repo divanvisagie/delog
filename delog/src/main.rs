@@ -1,10 +1,12 @@
 use std::process::{Command, Stdio};
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Write};
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use sysinfo::System;
+use termion::input::TermRead;
+use termion::raw::IntoRawMode;
 
 use crate::children::get_child_pids;
 
@@ -45,6 +47,8 @@ fn monitor_logs(system: &System, receiver: Receiver<String>, keywords: &[&str], 
         if keyword_found {
             println!("Breakpoint: {}", line);
             pause_process(system, pid);
+            println!("");
+            continue;
         }
         println!("{}", line);
     }
@@ -52,8 +56,9 @@ fn monitor_logs(system: &System, receiver: Receiver<String>, keywords: &[&str], 
 
 fn pause_process(system: &System, pid: Pid) {
     println!("Process paused. Press 'c' to continue...");
-    // Send SIGSTOP to pause the process
-    kill(pid, Signal::SIGSTOP).expect("Failed to pause process");
+    
+    // Pause the main process
+    kill(pid, Signal::SIGSTOP).expect("Failed to pause main process");
 
     // Pause forked child processes
     let child_pids = get_child_pids(system, pid);
@@ -61,20 +66,27 @@ fn pause_process(system: &System, pid: Pid) {
         kill(*child_pid, Signal::SIGSTOP).expect("Failed to pause child process");
     }
 
-    let mut input = String::new();
-    loop {
-        input.clear();
-        io::stdin().read_line(&mut input).expect("Failed to read line");
-        if input.trim() == "c" {
-            // Send SIGCONT to resume the process
-            kill(pid, Signal::SIGCONT).expect("Failed to resume process");
-            for child_pid in &child_pids {
-                kill(*child_pid, Signal::SIGCONT).expect("Failed to resume child process");
+    let stdin = io::stdin();
+    let mut stdout = io::stdout().into_raw_mode().unwrap();
+    stdout.flush().unwrap();
+
+    for c in stdin.keys() {
+        match c.unwrap() {
+            termion::event::Key::Char('c') => {
+                // Resume the main process
+                kill(pid, Signal::SIGCONT).expect("Failed to resume main process");
+
+                // Resume forked child processes
+                for child_pid in &child_pids {
+                    kill(*child_pid, Signal::SIGCONT).expect("Failed to resume child process");
+                }
+                break;
             }
-            break;
+            _ => {}
         }
-        println!("Invalid input. Press 'c' to continue...");
     }
+
+    println!("Continuing execution...");
 }
 
 fn main() {
